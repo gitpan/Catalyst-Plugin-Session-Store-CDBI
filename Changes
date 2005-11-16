@@ -1,0 +1,7 @@
+Revision history for Perl extension Catalyst::Plugin::Session::Store::CDBI
+
+0.02
+        - compatibility changes with Catalyst::Plugin::Session::Store api.
+
+0.01
+        - initial release
