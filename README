@@ -25,8 +25,16 @@ DESCRIPTION
     store_session_data
     delete_session_data
     delete_expired_sessions
+    setup_actions
+    setup_session
         These are implementations of the required methods for a store. See
         Catalyst::Plugin::Session::Store.
+
+    serialize
+        Returns the serialized form of the data passed in.
+
+    deserialize
+        Returns the deserialized data.
 
 CONFIGURATION
     These parameters are placed in the hash under the "session" key in the

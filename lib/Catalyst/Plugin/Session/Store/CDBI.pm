@@ -8,7 +8,7 @@ use Class::DBI;
 use MIME::Base64;
 use Storable qw/freeze thaw/;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 =head1 NAME
 
@@ -47,8 +47,20 @@ for Catalyst that uses Class::DBI.
 
 =item delete_expired_sessions
 
+=item setup_actions
+
+=item setup_session
+
 These are implementations of the required methods for a store. See
 L<Catalyst::Plugin::Session::Store>.
+
+=item serialize
+
+Returns the serialized form of the data passed in.
+
+=item deserialize
+
+Returns the deserialized data.
 
 =cut
 
@@ -61,15 +73,30 @@ sub get_session_data {
     my $storage_class = $c->_verify_storage_class( $cfg->{storage_class} );
 
     my $storage_field = $cfg->{storage_field} || 'storage';
-    my $id_field      = $cfg->{id_field}      || 'id';
+    my $id_field      = $c->_get_session_id_field();
+    my $expires_field = $cfg->{expires_field} || 'expires';
+
+    my $want_expires = 0;
+
+    if ( $sid =~ /^expires:/ ) {
+        my ($key) = $sid =~ /^expires:(.*)/;
+        $sid = "session:$key";
+        $want_expires = 1;
+    }
 
     if ( my $s = $storage_class->search( $id_field => $sid )->first ) {
-        $c->log->debug("Deserializing session data for $sid") if $c->debug;
-        if ( my $data = $s->get($storage_field) ) {
-            return $c->deserialize($data);
+        if ( $want_expires ) {
+            $c->log->debug("returning expires for $sid") if $c->debug;
+            return $s->get($expires_field);
         }
         else {
-            return;
+          if ( my $data = $s->get($storage_field) ) {
+              $c->log->debug("Deserializing session data for $sid") if $c->debug;
+              return $c->deserialize($data);
+          }
+          else {
+              return;
+          }
         }
     }
     $c->log->debug("Could not find session for $sid") if $c->debug;
@@ -86,17 +113,33 @@ sub store_session_data {
     my $storage_class = $c->_verify_storage_class( $cfg->{storage_class} );
 
     my $storage_field = $cfg->{storage_field} || 'storage';
-    my $id_field      = $cfg->{id_field}      || 'id';
+    my $id_field      = $c->_get_session_id_field();
     my $expires_field = $cfg->{expires_field} || 'expires';
     my $expires       = $cfg->{expires}       || 3600;
     my $need_commit   = $cfg->{need_commit}   || 0;
 
+    my $want_expires = 0;
+
+    if ( $sid =~ /^expires:/ ) {
+        my ($key) = $sid =~ /^expires:(.*)/;
+        $sid = "session:$key";
+        $want_expires = 1;
+    }
+
     if ( my $s = $storage_class->find_or_create( $id_field => $sid ) ) {
 
-        $c->log->debug("Serializing session data for $sid") if $c->debug;
-        $s->set( $storage_field, $c->serialize($data) );
-        $s->set( $expires_field, time + $expires );
-        $s->update;
+        if ( $want_expires ) {
+            $s->set( $expires_field, $c->session_expires );
+            $s->update;
+        }
+        else {
+            $c->log->debug("Serializing session data for $sid") if $c->debug;
+            $s->set( $storage_field, $c->serialize($data) );
+            if ( $sid =~ /^(?:session|flash):/ ) {
+                $s->set( $expires_field, $c->session_expires );
+            }
+            $s->update;
+        }
 
     }
     else {
@@ -114,11 +157,12 @@ sub delete_session_data {
     my ( $c, $sid ) = @_;
 
     return unless $sid;
+    return if $sid =~ /^expires/;
 
     my $cfg           = $c->config->{session};
     my $storage_class = $c->_verify_storage_class( $cfg->{storage_class} );
 
-    my $id_field = $cfg->{id_field} || 'id';
+    my $id_field      = $c->_get_session_id_field();
 
     $storage_class->search( $id_field => $sid )->delete_all();
     $storage_class->dbi_commit if ( $cfg->{need_commit} );
@@ -178,6 +222,24 @@ sub setup_actions {
     my $c = shift;
     $c->NEXT::setup_actions(@_);
 }
+
+sub _get_session_id_field {
+    my $c = shift;
+    
+    my $cfg = $c->config->{session};
+    return $cfg->{id_field} if $cfg->{id_field};
+    
+    my $storage_class = $c->_verify_storage_class( $cfg->{storage_class} );
+
+    my @pkeys = $storage_class->columns('Primary');
+    if(scalar(@pkeys) > 1)
+    {
+        $c->error("More than one primary key setup on the session table.");
+    }
+
+    return $pkeys[0]->name;
+}
+
 
 =back
 
